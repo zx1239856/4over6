@@ -52,13 +52,14 @@ namespace utils {
 
         void start();
 
-        void close(bool remove=true);
+        void close(bool remove = true);
 
         bool expires() { return time(nullptr) - info.secs > 60; }
 
         uint32_t heartbeat_tick() { return info.count != 0 ? --info.count : 0; }
 
         void send_heartbeat();
+
     private:
         void do_read();
 
@@ -74,15 +75,46 @@ namespace utils {
         struct UserInfo info = {};
     };
 
+    class TunDevice {
+    public:
+        typedef std::function<void(uint8_t *, size_t)> packet_handler;
+
+        TunDevice(boost::asio::io_service &io_service, packet_handler handler, const std::string &if_name,
+                  const std::string &tun_ip, const std::string &net_mask);
+
+        const std::string &device() { return if_name; };
+
+        void send_packet(const uint8_t *buffer, size_t length);
+
+    private:
+        boost::asio::posix::stream_descriptor stream_descriptor;
+        std::string if_name;
+        std::string tun_ip;
+        std::string net_mask;
+        uint8_t readbuf[1500]{};
+
+        packet_handler handler_func;
+
+        void async_read_packet();
+
+        void on_read_done(const boost::system::error_code &ec, size_t length);
+
+        void assign_tun_ip();
+
+        void assign_tun_route();
+    };
+
     class Server {
         friend class Session;
 
     public:
-        Server(std::shared_ptr<AddressPool> pool, const ConfigPayload &config, boost::asio::io_service &io_service, const boost::asio::ip::address_v6 & address, ushort port);
+        Server(std::shared_ptr<AddressPool> pool, const ConfigPayload &config, boost::asio::io_service &io_service,
+               const boost::asio::ip::address_v6 &address, ushort port);
+
     private:
         void clear_session(const std::string &v6addr) {
             auto it = v6_v4_mappings.find(v6addr);
-            if(it != v6_v4_mappings.end()) {
+            if (it != v6_v4_mappings.end()) {
                 user_sessions.erase(user_sessions.find(it->second.to_ulong()));
                 v6_v4_mappings.erase(it);
             }
@@ -93,6 +125,8 @@ namespace utils {
         void handle_client(boost::system::error_code ec);
 
         void handle_heartbeat();
+
+        void handle_tun_data(uint8_t *buffer, size_t length);
 
         boost::asio::ip::tcp::acceptor acceptor;
         boost::asio::ip::tcp::socket socket;
@@ -106,6 +140,9 @@ namespace utils {
 
         // heartbeat timer
         boost::asio::deadline_timer heartbeat_timer;
+
+        // TUN device
+        TunDevice tunnel;
     };
 }
 

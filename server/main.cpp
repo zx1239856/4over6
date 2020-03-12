@@ -15,13 +15,12 @@ int main(int argc, char **argv) {
             ("d,debug", "Enable debugging", cxxopts::value<bool>()->default_value("false"))
             ("c,conf", "File name", cxxopts::value<std::string>())
             ("v,verbose", "Verbose output", cxxopts::value<bool>()->default_value("false"))
-            ("h,help", "Print usage")
-            ;
+            ("h,help", "Print usage");
     auto default_log_sink = AixLog::Log::init<AixLog::SinkCout>(AixLog::Severity::trace, AixLog::Type::all);
     try {
         auto result = options.parse(argc, argv);
-        if(!result["debug"].as<bool>()) default_log_sink->severity = AixLog::Severity::warning;
-        if(!result["verbose"].as<bool>()) default_log_sink->set_type(AixLog::Type::normal);
+        if (!result["debug"].as<bool>()) default_log_sink->severity = AixLog::Severity::warning;
+        if (!result["verbose"].as<bool>()) default_log_sink->set_type(AixLog::Type::normal);
         // parse config
         YAML::Node config = YAML::LoadFile(result["conf"].as<std::string>());
 
@@ -35,22 +34,27 @@ int main(int argc, char **argv) {
         ip::address_v4 dns_0 = ip::address_v4::from_string(config["dns0"].as<std::string>());
         ip::address_v4 dns_1 = ip::address_v4::from_string(config["dns1"].as<std::string>());
         ip::address_v4 dns_2 = ip::address_v4::from_string(config["dns2"].as<std::string>());
+        ip::address_v4 netmask = ip::address_v4::from_string(config["netmask"].as<std::string>());
 
-        ConfigPayload server_conf{"", gateway.to_string(), {dns_0.to_string(), dns_1.to_string(), dns_2.to_string()}};
+        ConfigPayload server_conf{"", gateway.to_string(), netmask.to_string(),
+                                  {dns_0.to_string(), dns_1.to_string(), dns_2.to_string()}};
 
-        auto pool = std::make_shared<utils::AddressPool>(ip::address_v4::from_string(start_addr), ip::address_v4::from_string(end_addr));
+        auto pool = std::make_shared<utils::AddressPool>(ip::address_v4::from_string(start_addr),
+                                                         ip::address_v4::from_string(end_addr));
         io_service io_serv;
-        utils::Server server{pool, server_conf, io_serv, ip::address_v6::from_string(config["listen_address"].as<std::string>()), config["port"].as<uint16_t>()};
+        utils::Server server{pool, server_conf, io_serv,
+                             ip::address_v6::from_string(config["listen_address"].as<std::string>()),
+                             config["port"].as<uint16_t>()};
         io_serv.run();
     }
-    catch(const cxxopts::OptionException &ex) {
+    catch (const cxxopts::OptionException &ex) {
         LOG_FATAL(ex.what());
         LOG(INFO) << options.help();
     }
-    catch(const std::exception &ex) {
+    catch (const std::exception &ex) {
         LOG_FATAL(ex.what());
     }
-    catch(...) {
+    catch (...) {
         LOG_FATAL("An exception has occurred");
     }
     return 0;

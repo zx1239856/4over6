@@ -18,11 +18,12 @@ struct Msg {
     uint32_t length;
     uint8_t type;
     uint8_t data[DATA_LEN];
-};
+} __attribute__((packed));
 
 struct ConfigPayload {
     std::string lease;
     std::string gateway;
+    std::string netmask;
     std::string dns[3];
 
     size_t serialize(uint8_t *buffer, size_t max_len) {
@@ -30,7 +31,7 @@ struct ConfigPayload {
         out << lease << " " << gateway << " " << dns[0] << " " << dns[1] << " " << dns[2];
         auto str = out.str();
         auto len = std::min(max_len, str.length());
-        memcpy(buffer, reinterpret_cast<const uint8_t*>(str.c_str()), len);
+        memcpy(buffer, reinterpret_cast<const uint8_t *>(str.c_str()), len);
         return len;
     }
 };

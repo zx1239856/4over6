@@ -4,6 +4,9 @@
 #include "utils.h"
 
 #include <utility>
+#include <net/if.h>
+#include <linux/if_tun.h>
+#include <net/route.h>
 
 using namespace boost;
 using namespace boost::system;
@@ -53,11 +56,11 @@ namespace utils {
     }
 
     void Session::close(bool remove) {
-        if(socket.is_open()) {
+        if (socket.is_open()) {
             socket.close();
             LOG(INFO) << "Connection closed by: " << info.v6addr << std::endl;
         }
-        if(remove)
+        if (remove)
             server.clear_session(info.v6addr);
     }
 
@@ -66,7 +69,7 @@ namespace utils {
         socket.async_read_some(boost::asio::buffer(&read_data, max_length),
                                [this, self](boost::system::error_code ec, std::size_t length) {
                                    if (!ec) {
-                                       if(read_data.length < HEADER_LEN) {
+                                       if (read_data.length < HEADER_LEN) {
                                            LOG(DEBUG) << "Got invalid packet from: " << info.v6addr << std::endl;
                                        } else {
                                            switch (read_data.type) {
@@ -118,20 +121,23 @@ namespace utils {
                    const ip::address_v6 &address, ushort port)
             : acceptor(io_service, tcp::endpoint(address, port)),
               socket(io_service), pool(std::move(p)), config(conf),
-              heartbeat_timer(io_service, ONE_SECOND){
+              heartbeat_timer(io_service, ONE_SECOND),
+              tunnel(io_service,
+                     boost::bind(&Server::handle_tun_data, this, boost::placeholders::_1, boost::placeholders::_2),
+                     "4over6_tun", conf.gateway, conf.netmask) {
         accept();
         heartbeat_timer.async_wait(boost::bind(&Server::handle_heartbeat, this));
     }
 
     void Server::handle_heartbeat() {
         // handle heartbeat
-        for(auto it = v6_v4_mappings.begin(); it != v6_v4_mappings.end();) {
-            auto & sess = user_sessions[it->second.to_ulong()];
-            if(sess->heartbeat_tick() == 0) {
+        for (auto it = v6_v4_mappings.begin(); it != v6_v4_mappings.end();) {
+            auto &sess = user_sessions[it->second.to_ulong()];
+            if (sess->heartbeat_tick() == 0) {
                 sess->send_heartbeat();
                 LOG(DEBUG) << "Sending heartbeat to client: " << it->first << std::endl;
             }
-            if(sess->expires()) {
+            if (sess->expires()) {
                 sess->close(false);
                 user_sessions.erase(it->second.to_ulong());
                 it = v6_v4_mappings.erase(it);
@@ -175,5 +181,122 @@ namespace utils {
 
     void Server::accept() {
         acceptor.async_accept(socket, boost::bind(&Server::handle_client, this, boost::asio::placeholders::error));
+    }
+
+    void Server::handle_tun_data(uint8_t *buffer, size_t length) {
+        // TODO
+    }
+
+    void TunDevice::async_read_packet() {
+        stream_descriptor.async_read_some(boost::asio::buffer(readbuf),
+                                          boost::bind(&TunDevice::on_read_done, this, boost::asio::placeholders::error,
+                                                      boost::asio::placeholders::bytes_transferred));
+    }
+
+    void TunDevice::on_read_done(const boost::system::error_code &ec, size_t length) {
+        if (ec) {
+            throw std::runtime_error("Failed to read from TUN device");
+        }
+        if (readbuf[2] == 8) {
+            // ipv4 packet
+            handler_func(&readbuf[4], length - 4);
+        }
+        async_read_packet();
+    }
+
+    void TunDevice::assign_tun_ip() {
+        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+        struct ifreq ifr = {};
+        strncpy(ifr.ifr_name, if_name.c_str(), IF_NAMESIZE);
+        ifr.ifr_addr.sa_family = AF_INET;
+        sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+
+        inet_pton(AF_INET, tun_ip.c_str(), &addr->sin_addr);
+        ioctl(sock, SIOCSIFADDR, &ifr);
+
+        ifr.ifr_mtu = 1500 - HEADER_LEN;
+        ioctl(sock, SIOCSIFMTU, (caddr_t) &ifr);
+        ifr.ifr_flags = (IFF_TUN | IFF_NO_PI | IFF_MULTI_QUEUE | IFF_UP | IFF_RUNNING);
+        if (ioctl(sock, SIOCSIFFLAGS, &ifr)) {
+            throw std::runtime_error("Failed to bring up virtual tap device");
+        }
+
+        close(sock);
+    }
+
+    void TunDevice::assign_tun_route() {
+        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+        struct rtentry rt;
+        memset(&rt, 0, sizeof(rtentry));
+
+        struct sockaddr_in *sockinfo = (struct sockaddr_in *) &rt.rt_gateway;
+        sockinfo->sin_family = AF_INET;
+        sockinfo->sin_addr.s_addr = 0;
+
+        sockinfo = (struct sockaddr_in *) &rt.rt_genmask;
+        sockinfo->sin_family = AF_INET;
+        inet_pton(AF_INET, net_mask.c_str(), &sockinfo->sin_addr);
+
+        auto mask = sockinfo->sin_addr.s_addr;
+
+        sockinfo = (struct sockaddr_in *) &rt.rt_dst;
+        sockinfo->sin_family = AF_INET;
+        inet_pton(AF_INET, tun_ip.c_str(), &sockinfo->sin_addr);
+        sockinfo->sin_addr.s_addr &= mask;
+
+        rt.rt_flags = RTF_UP;
+        rt.rt_metric = 0;
+        rt.rt_dev = const_cast<char *>(if_name.c_str());
+
+        LOG(INFO) << "Add route: " << tun_ip << ", mask: " << net_mask << std::endl;
+
+        auto err = ioctl(sock, SIOCADDRT, &rt);
+        if (err) {
+            throw std::runtime_error(
+                    "Failed to add link-scope route for virtual tap device, errno: " + std::to_string(errno));
+        }
+        close(sock);
+    }
+
+    TunDevice::TunDevice(boost::asio::io_service &io_service, TunDevice::packet_handler handler,
+                         const std::string &_if_name, const std::string &_tun_ip, const std::string &_net_mask)
+            : stream_descriptor(io_service),
+              if_name(_if_name), tun_ip(_tun_ip),
+              net_mask(_net_mask), handler_func(handler) {
+        int tun_fd = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
+        if (tun_fd < 0) {
+            throw std::runtime_error("Failed to open tun device node /dev/net/tun");
+        }
+
+        struct ifreq ifr;
+        memset(&ifr, 0, sizeof(ifr));
+        ifr.ifr_flags = IFF_TUN;
+        if (ioctl(tun_fd, TUNSETIFF, &ifr) < 0) {
+            close(tun_fd);
+            throw std::runtime_error("Failed to create tun device");
+        }
+        if_name = ifr.ifr_name;
+
+        assign_tun_ip();
+        assign_tun_route();
+
+        stream_descriptor.assign(tun_fd);
+        async_read_packet();
+    }
+
+    void TunDevice::send_packet(const uint8_t *buffer, size_t length) {
+        auto *packet_copy = new uint8_t[4 + length];
+        packet_copy[0] = 0;
+        packet_copy[1] = 0;
+        packet_copy[2] = 8;
+        packet_copy[3] = 0;
+        memcpy(4 + packet_copy, buffer, length);
+
+        boost::asio::async_write(stream_descriptor, boost::asio::buffer(packet_copy, 4 + length),
+                                 [packet_copy](const boost::system::error_code &error, std::size_t bytes_transferred) {
+                                     delete[] packet_copy;
+                                 }
+        );
     }
 }
