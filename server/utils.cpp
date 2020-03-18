@@ -5,6 +5,7 @@
 
 #include <utility>
 #include <net/if.h>
+#include <linux/ip.h>
 #include <linux/if_tun.h>
 #include <net/route.h>
 
@@ -42,16 +43,17 @@ namespace utils {
         }
     }
 
-    Session::Session(Server &_server, boost::asio::ip::tcp::socket skt)
-            : server(_server), socket(std::move(skt)) {
+    Session::Session(Server &_server, boost::asio::io_service &io_service)
+            : server(_server), socket(io_service) {
+    }
+
+    void Session::start() {
         info.count = 20;
         info.secs = time(nullptr);
         error_code ec;
         auto endpoint = socket.remote_endpoint(ec);
         info.v6addr = endpoint.address().to_string();
-    }
-
-    void Session::start() {
+        LOG(INFO) << "Accepted client: " << info.v6addr << ":" << endpoint.port() << std::endl;
         do_read();
     }
 
@@ -66,47 +68,34 @@ namespace utils {
 
     void Session::do_read() {
         auto self(shared_from_this());
-        socket.async_read_some(boost::asio::buffer(&read_data, max_length),
-                               [this, self](boost::system::error_code ec, std::size_t length) {
-                                   if (!ec) {
-                                       if (read_data.length < HEADER_LEN) {
-                                           LOG(DEBUG) << "Got invalid packet from: " << info.v6addr << std::endl;
-                                       } else {
-                                           switch (read_data.type) {
-                                               case IP_REQUEST: {
-                                                   auto conf = server.config;
-                                                   conf.lease = server.v6_v4_mappings[info.v6addr].to_string();
-                                                   write_data.type = IP_RESPONSE;
-                                                   write_data.length =
-                                                           HEADER_LEN + conf.serialize(write_data.data, DATA_LEN);
-                                                   do_write(write_data.length);
-                                               }
-                                                   break;
-                                               case REQUEST:
-                                                   // TODO: forward this to tunnel
-                                                   break;
-                                               case HEARTBEAT:
-                                                   LOG(DEBUG) << "Receive heartbeat from: " << info.v6addr << std::endl;
-                                                   info.secs = time(nullptr);
-                                                   do_read();
-                                                   break;
-                                           }
-                                       }
-                                   } else {
-                                       close();
-                                   }
-                               });
+        async_read(socket, boost::asio::buffer(&read_data, HEADER_LEN),
+                   [this, self](boost::system::error_code ec, std::size_t length) {
+                       if (!ec) {
+                           if (length < HEADER_LEN || read_data.length < HEADER_LEN) {
+                               LOG(DEBUG) << "Got invalid packet from: " << info.v6addr << std::endl;
+                           } else {
+                               async_read(socket, boost::asio::buffer(&read_data.data, std::min(DATA_LEN,
+                                                                                                read_data.length -
+                                                                                                HEADER_LEN)),
+                                          boost::bind(&Session::on_data_read_done, shared_from_this(),
+                                                      asio::placeholders::error));
+                           }
+                       } else {
+                           close();
+                       }
+                   });
     }
 
     void Session::do_write(std::size_t length) {
         auto self(shared_from_this());
-        boost::asio::async_write(socket, boost::asio::buffer(&write_data, length),
-                                 [this, self](boost::system::error_code ec, std::size_t /*length*/) {
-                                     if (!ec) {
-                                         do_read();
-                                     } else {
+        auto *buffer = new uint8_t[length];
+        memcpy(buffer, &write_data, sizeof(uint8_t) * length);
+        boost::asio::async_write(socket, boost::asio::buffer(buffer, length),
+                                 [this, self, buffer](boost::system::error_code ec, std::size_t /*length*/) {
+                                     if (ec) {
                                          close();
                                      }
+                                     delete[] buffer;
                                  });
     }
 
@@ -115,6 +104,43 @@ namespace utils {
         write_data.type = HEARTBEAT;
         write_data.length = HEADER_LEN;
         do_write(HEADER_LEN);
+    }
+
+    void Session::send_tunnel_data(uint8_t *buffer, size_t length) {
+        write_data.length = length + HEADER_LEN;
+        write_data.type = RESPONSE;
+        memcpy(&write_data.data, buffer, sizeof(uint8_t) * length);
+//        LOG(DEBUG) << "Send response to client: " << info.v6addr << ", len: " << write_data.length << std::endl;
+        do_write(write_data.length);
+    }
+
+    void Session::on_data_read_done(boost::system::error_code ec) {
+        auto msg = &read_data;
+        if (!ec) {
+            switch (msg->type) {
+                case IP_REQUEST: {
+                    auto conf = server.config;
+                    conf.lease = server.v6_v4_mappings[info.v6addr].to_string();
+                    write_data.type = IP_RESPONSE;
+                    write_data.length =
+                            HEADER_LEN + conf.serialize(write_data.data, DATA_LEN);
+                    do_write(write_data.length);
+                }
+                    break;
+                case REQUEST:
+                    this->server.tunnel.send_packet(msg->data,
+                                                    msg->length - HEADER_LEN);
+                    break;
+                case HEARTBEAT:
+                    LOG(DEBUG) << "Receive heartbeat from: " << info.v6addr
+                               << std::endl;
+                    info.secs = time(nullptr);
+                    break;
+            }
+            do_read();
+        } else {
+            close();
+        }
     }
 
     Server::Server(std::shared_ptr<AddressPool> p, const ConfigPayload &conf, io_service &io_service,
@@ -133,15 +159,18 @@ namespace utils {
         // handle heartbeat
         for (auto it = v6_v4_mappings.begin(); it != v6_v4_mappings.end();) {
             auto &sess = user_sessions[it->second.to_ulong()];
+            if (sess == nullptr)
+                continue;
             if (sess->heartbeat_tick() == 0) {
                 sess->send_heartbeat();
                 LOG(DEBUG) << "Sending heartbeat to client: " << it->first << std::endl;
             }
             if (sess->expires()) {
                 sess->close(false);
+                LOG(DEBUG) << "Client: timed out" << it->first << std::endl;
+                pool->return_ip_address(it->second);
                 user_sessions.erase(it->second.to_ulong());
                 it = v6_v4_mappings.erase(it);
-                LOG(DEBUG) << "Client: timed out" << it->first << std::endl;
             } else
                 ++it;
         }
@@ -150,11 +179,10 @@ namespace utils {
         heartbeat_timer.async_wait(boost::bind(&Server::handle_heartbeat, this));
     }
 
-    void Server::handle_client(boost::system::error_code ec) {
+    void Server::handle_client(std::shared_ptr<Session> session, boost::system::error_code ec) {
         if (!ec) {
-            auto endpoint = socket.remote_endpoint();
+            auto endpoint = session->get_socket().remote_endpoint();
             auto v6addr = endpoint.address().to_v6();
-            LOG(INFO) << "Accepted client: " << v6addr << ":" << endpoint.port() << std::endl;
             ip::address_v4 v4addr;
             bool reuse = false;
             if (v6_v4_mappings.find(v6addr.to_string()) == v6_v4_mappings.end()) {
@@ -171,7 +199,6 @@ namespace utils {
                 if (sess != user_sessions.end()) {
                     sess->second->close();
                 }
-                auto session = std::make_shared<Session>(*this, std::move(socket));
                 user_sessions[v4addr.to_ulong()] = session;
                 session->start();
             }
@@ -180,11 +207,20 @@ namespace utils {
     }
 
     void Server::accept() {
-        acceptor.async_accept(socket, boost::bind(&Server::handle_client, this, boost::asio::placeholders::error));
+        auto session = std::make_shared<Session>(*this, acceptor.get_io_service());
+        acceptor.async_accept(session->get_socket(), boost::bind(&Server::handle_client, this, session, boost::asio::placeholders::error));
     }
 
     void Server::handle_tun_data(uint8_t *buffer, size_t length) {
-        // TODO
+        auto *hdr = reinterpret_cast<struct iphdr *>(buffer);
+        if (hdr->version == 4) {
+            auto dst = ntohl(hdr->daddr);
+//            LOG(DEBUG) << ip::address_v4(ntohl(hdr->saddr)) << " --> " << ip::address_v4(dst) << std::endl;
+            auto it = user_sessions.find(dst);
+            if (it != user_sessions.end() && it->second != nullptr) {
+                it->second->send_tunnel_data(buffer, length);
+            }
+        }
     }
 
     void TunDevice::async_read_packet() {
@@ -216,7 +252,7 @@ namespace utils {
 
         ifr.ifr_mtu = 1500 - HEADER_LEN;
         ioctl(sock, SIOCSIFMTU, (caddr_t) &ifr);
-        ifr.ifr_flags = (IFF_TUN | IFF_NO_PI | IFF_MULTI_QUEUE | IFF_UP | IFF_RUNNING);
+        ifr.ifr_flags |= (IFF_TUN | IFF_NO_PI | IFF_UP | IFF_RUNNING);
         if (ioctl(sock, SIOCSIFFLAGS, &ifr)) {
             throw std::runtime_error("Failed to bring up virtual tap device");
         }
@@ -227,10 +263,9 @@ namespace utils {
     void TunDevice::assign_tun_route() {
         int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
-        struct rtentry rt;
-        memset(&rt, 0, sizeof(rtentry));
+        struct rtentry rt = {0};
 
-        struct sockaddr_in *sockinfo = (struct sockaddr_in *) &rt.rt_gateway;
+        auto *sockinfo = (struct sockaddr_in *) &rt.rt_gateway;
         sockinfo->sin_family = AF_INET;
         sockinfo->sin_addr.s_addr = 0;
 
@@ -281,6 +316,15 @@ namespace utils {
         assign_tun_ip();
         assign_tun_route();
 
+        int opts = fcntl(tun_fd, F_GETFL);
+        if(opts < 0) {
+            throw std::runtime_error("Invalid options of TUN device");
+        }
+        opts |=  O_NONBLOCK;
+        if( fcntl(tun_fd, F_SETFL, opts) < 0 ){
+            throw std::runtime_error("Failed to set non-blocking mode of TUN device");
+        }
+
         stream_descriptor.assign(tun_fd);
         async_read_packet();
     }
@@ -292,6 +336,9 @@ namespace utils {
         packet_copy[2] = 8;
         packet_copy[3] = 0;
         memcpy(4 + packet_copy, buffer, length);
+
+        auto hdr = reinterpret_cast<const struct iphdr *>(buffer);
+//        LOG(DEBUG) << ip::address_v4(ntohl(hdr->saddr)) << " --> " << ip::address_v4(ntohl(hdr->daddr)) << std::endl;
 
         boost::asio::async_write(stream_descriptor, boost::asio::buffer(packet_copy, 4 + length),
                                  [packet_copy](const boost::system::error_code &error, std::size_t bytes_transferred) {

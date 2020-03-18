@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     auto default_log_sink = AixLog::Log::init<AixLog::SinkCout>(AixLog::Severity::trace, AixLog::Type::all);
     try {
         auto result = options.parse(argc, argv);
-        if (!result["debug"].as<bool>()) default_log_sink->severity = AixLog::Severity::warning;
+        if (!result["debug"].as<bool>()) default_log_sink->severity = AixLog::Severity::info;
         if (!result["verbose"].as<bool>()) default_log_sink->set_type(AixLog::Type::normal);
         // parse config
         YAML::Node config = YAML::LoadFile(result["conf"].as<std::string>());

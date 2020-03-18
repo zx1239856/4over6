@@ -48,7 +48,7 @@ namespace utils {
     class Session
             : public std::enable_shared_from_this<Session> {
     public:
-        Session(Server &server, boost::asio::ip::tcp::socket s);
+        Session(Server &server, boost::asio::io_service &io_service);
 
         void start();
 
@@ -60,7 +60,15 @@ namespace utils {
 
         void send_heartbeat();
 
+        void send_tunnel_data(uint8_t *buffer, size_t length);
+
+        boost::asio::ip::tcp::socket &get_socket() {
+            return socket;
+        }
+
     private:
+        void on_data_read_done(boost::system::error_code ec);
+
         void do_read();
 
         void do_write(std::size_t length);
@@ -115,6 +123,7 @@ namespace utils {
         void clear_session(const std::string &v6addr) {
             auto it = v6_v4_mappings.find(v6addr);
             if (it != v6_v4_mappings.end()) {
+                pool->return_ip_address(it->second);
                 user_sessions.erase(user_sessions.find(it->second.to_ulong()));
                 v6_v4_mappings.erase(it);
             }
@@ -122,7 +131,7 @@ namespace utils {
 
         void accept();
 
-        void handle_client(boost::system::error_code ec);
+        void handle_client(std::shared_ptr<Session> session, boost::system::error_code ec);
 
         void handle_heartbeat();
 

@@ -11,14 +11,15 @@ constexpr uint8_t REQUEST = 102;
 constexpr uint8_t RESPONSE = 103;
 constexpr uint8_t HEARTBEAT = 104;
 
-constexpr size_t DATA_LEN = 4096;
-constexpr size_t HEADER_LEN = sizeof(uint32_t) + sizeof(uint8_t);
+constexpr size_t DATA_LEN = 2048;
 
 struct Msg {
     uint32_t length;
     uint8_t type;
     uint8_t data[DATA_LEN];
 } __attribute__((packed));
+
+constexpr size_t HEADER_LEN = offsetof(Msg, data);
 
 struct ConfigPayload {
     std::string lease;
@@ -28,7 +29,8 @@ struct ConfigPayload {
 
     size_t serialize(uint8_t *buffer, size_t max_len) {
         std::ostringstream out;
-        out << lease << " " << gateway << " " << dns[0] << " " << dns[1] << " " << dns[2];
+//        out << lease << " " << gateway << " " << dns[0] << " " << dns[1] << " " << dns[2];
+        out << lease << " " << "0.0.0.0" << " " << dns[0] << " " << dns[1] << " " << dns[2];
         auto str = out.str();
         auto len = std::min(max_len, str.length());
         memcpy(buffer, reinterpret_cast<const uint8_t *>(str.c_str()), len);
