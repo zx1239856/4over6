@@ -88,15 +88,11 @@ namespace utils {
 
     void Session::do_write(std::size_t length) {
         auto self(shared_from_this());
-        auto *buffer = new uint8_t[length];
-        memcpy(buffer, &write_data, sizeof(uint8_t) * length);
-        boost::asio::async_write(socket, boost::asio::buffer(buffer, length),
-                                 [this, self, buffer](boost::system::error_code ec, std::size_t /*length*/) {
-                                     if (ec) {
-                                         close();
-                                     }
-                                     delete[] buffer;
-                                 });
+        system::error_code ec;
+        boost::asio::write(socket, boost::asio::buffer(&write_data, length), boost::asio::transfer_all(), ec);
+        if (ec) {
+            close();
+        }
     }
 
     void Session::send_heartbeat() {
@@ -208,7 +204,8 @@ namespace utils {
 
     void Server::accept() {
         auto session = std::make_shared<Session>(*this, acceptor.get_io_service());
-        acceptor.async_accept(session->get_socket(), boost::bind(&Server::handle_client, this, session, boost::asio::placeholders::error));
+        acceptor.async_accept(session->get_socket(),
+                              boost::bind(&Server::handle_client, this, session, boost::asio::placeholders::error));
     }
 
     void Server::handle_tun_data(uint8_t *buffer, size_t length) {
@@ -317,11 +314,11 @@ namespace utils {
         assign_tun_route();
 
         int opts = fcntl(tun_fd, F_GETFL);
-        if(opts < 0) {
+        if (opts < 0) {
             throw std::runtime_error("Invalid options of TUN device");
         }
-        opts |=  O_NONBLOCK;
-        if( fcntl(tun_fd, F_SETFL, opts) < 0 ){
+        opts |= O_NONBLOCK;
+        if (fcntl(tun_fd, F_SETFL, opts) < 0) {
             throw std::runtime_error("Failed to set non-blocking mode of TUN device");
         }
 
@@ -330,20 +327,16 @@ namespace utils {
     }
 
     void TunDevice::send_packet(const uint8_t *buffer, size_t length) {
-        auto *packet_copy = new uint8_t[4 + length];
-        packet_copy[0] = 0;
-        packet_copy[1] = 0;
-        packet_copy[2] = 8;
-        packet_copy[3] = 0;
-        memcpy(4 + packet_copy, buffer, length);
+        writebuf[0] = 0;
+        writebuf[1] = 0;
+        writebuf[2] = 8;
+        writebuf[3] = 0;
+        memcpy(4 + writebuf, buffer, std::min(length, sizeof(writebuf) - 4));
 
-        auto hdr = reinterpret_cast<const struct iphdr *>(buffer);
+//        auto hdr = reinterpret_cast<const struct iphdr *>(buffer);
 //        LOG(DEBUG) << ip::address_v4(ntohl(hdr->saddr)) << " --> " << ip::address_v4(ntohl(hdr->daddr)) << std::endl;
-
-        boost::asio::async_write(stream_descriptor, boost::asio::buffer(packet_copy, 4 + length),
-                                 [packet_copy](const boost::system::error_code &error, std::size_t bytes_transferred) {
-                                     delete[] packet_copy;
-                                 }
-        );
+        system::error_code ec;
+        boost::asio::write(stream_descriptor, boost::asio::buffer(writebuf, 4 + length), boost::asio::transfer_all(),
+                           ec);
     }
 }

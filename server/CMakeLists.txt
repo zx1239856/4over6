@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(server)
 
 set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_BUILD_TYPE debug)
+set(CMAKE_BUILD_TYPE release)
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 

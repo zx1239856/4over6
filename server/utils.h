@@ -100,6 +100,7 @@ namespace utils {
         std::string tun_ip;
         std::string net_mask;
         uint8_t readbuf[1500]{};
+        uint8_t writebuf[1500]{};
 
         packet_handler handler_func;
 
