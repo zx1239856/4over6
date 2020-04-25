@@ -33,7 +33,7 @@ namespace utils {
             pool.erase(pool.begin());
             return res;
         } else {
-            ip::address_v4(0);
+            return ip::address_v4(0);
         }
     }
 
@@ -43,9 +43,17 @@ namespace utils {
         }
     }
 
-    Session::Session(Server &_server, boost::asio::io_service &io_service)
+#if BOOST_VERSION >= 107000
+
+    Session::Session(Server &_server, boost::asio::executor io_service)
             : server(_server), socket(io_service) {
     }
+
+#else
+    Session::Session(Server &_server, boost::asio::io_service &io_service)
+                : server(_server), socket(io_service) {
+    }
+#endif
 
     void Session::start() {
         info.count = 20;
@@ -163,7 +171,7 @@ namespace utils {
             }
             if (sess->expires()) {
                 sess->close(false);
-                LOG(DEBUG) << "Client: timed out" << it->first << std::endl;
+                LOG(DEBUG) << "Timed out client: " << it->first << std::endl;
                 pool->return_ip_address(it->second);
                 user_sessions.erase(it->second.to_ulong());
                 it = v6_v4_mappings.erase(it);
@@ -203,7 +211,11 @@ namespace utils {
     }
 
     void Server::accept() {
+#if BOOST_VERSION >= 107000
+        auto session = std::make_shared<Session>(*this, acceptor.get_executor());
+#else
         auto session = std::make_shared<Session>(*this, acceptor.get_io_service());
+#endif
         acceptor.async_accept(session->get_socket(),
                               boost::bind(&Server::handle_client, this, session, boost::asio::placeholders::error));
     }

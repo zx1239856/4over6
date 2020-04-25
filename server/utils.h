@@ -48,7 +48,11 @@ namespace utils {
     class Session
             : public std::enable_shared_from_this<Session> {
     public:
+#if BOOST_VERSION >= 107000
+        Session(Server &server, boost::asio::executor io_service);
+#else
         Session(Server &server, boost::asio::io_service &io_service);
+#endif
 
         void start();
 
