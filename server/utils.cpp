@@ -163,8 +163,9 @@ namespace utils {
         // handle heartbeat
         for (auto it = v6_v4_mappings.begin(); it != v6_v4_mappings.end();) {
             auto &sess = user_sessions[it->second.to_ulong()];
-            if (sess == nullptr)
-                continue;
+            if (sess == nullptr) {
+                LOG_FATAL("Occurred NULL session, check your memory");
+            }
             if (sess->heartbeat_tick() == 0) {
                 sess->send_heartbeat();
                 LOG(DEBUG) << "Sending heartbeat to client: " << it->first << std::endl;
@@ -188,21 +189,18 @@ namespace utils {
             auto endpoint = session->get_socket().remote_endpoint();
             auto v6addr = endpoint.address().to_v6();
             ip::address_v4 v4addr;
-            bool reuse = false;
-            if (v6_v4_mappings.find(v6addr.to_string()) == v6_v4_mappings.end()) {
-                v4addr = pool->obtain_ip_address();
-            } else {
-                reuse = true;
-                v4addr = v6_v4_mappings[v6addr.to_string()];
-            }
-            if (v4addr.to_ulong() != 0) {
-                v6_v4_mappings[v6addr.to_string()] = v4addr;
-                if (reuse) LOG(INFO) << "Reuse ";
-                LOG(INFO) << "IPv4 lease: " << v4addr << std::endl;
+            if(v6_v4_mappings.find(v6addr.to_string()) != v6_v4_mappings.end()) {
+                // clear previous session if already exists
+                auto v4 = v6_v4_mappings[v6addr.to_string()];
                 auto sess = user_sessions.find(v4addr.to_ulong());
                 if (sess != user_sessions.end()) {
                     sess->second->close();
                 }
+            }
+            v4addr = pool->obtain_ip_address();
+            if (v4addr.to_ulong() != 0) {
+                v6_v4_mappings[v6addr.to_string()] = v4addr;
+                LOG(INFO) << "IPv4 lease: " << v4addr << std::endl;
                 user_sessions[v4addr.to_ulong()] = session;
                 session->start();
             }

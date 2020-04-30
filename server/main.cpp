@@ -19,6 +19,15 @@ int main(int argc, char **argv) {
     auto default_log_sink = AixLog::Log::init<AixLog::SinkCout>(AixLog::Severity::trace, AixLog::Type::all);
     try {
         auto result = options.parse(argc, argv);
+        bool help = result.count("help");
+        if(result.count("conf") == 0) {
+            help = true;
+            LOG_WARN("Please provide configuration file.");
+        }
+        if (help) {
+            std::cout << options.help() << std::endl;
+            exit(0);
+        }
         if (!result["debug"].as<bool>()) default_log_sink->severity = AixLog::Severity::info;
         if (!result["verbose"].as<bool>()) default_log_sink->set_type(AixLog::Type::normal);
         // parse config
@@ -48,8 +57,9 @@ int main(int argc, char **argv) {
         io_serv.run();
     }
     catch (const cxxopts::OptionException &ex) {
-        LOG_FATAL(ex.what());
+        LOG_WARN(ex.what());
         LOG(INFO) << options.help();
+        exit(EXIT_FAILURE);
     }
     catch (const std::exception &ex) {
         LOG_FATAL(ex.what());

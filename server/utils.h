@@ -12,7 +12,7 @@
 #include "third-party/aixlog.hpp"
 #include "msg.h"
 
-#define LOG_FATAL(fmt) LOG(FATAL) << COLOR(red) << fmt << COLOR(none)
+#define LOG_FATAL(fmt) LOG(FATAL) << COLOR(red) << fmt << COLOR(none) << std::endl; exit(EXIT_FAILURE);
 #define LOG_WARN(fmt) LOG(WARNING) << COLOR(yellow) << fmt << COLOR(none)
 
 namespace utils {
