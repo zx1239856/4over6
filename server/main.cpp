@@ -1,6 +1,8 @@
 #include <exception>
 #include <unordered_set>
 #include <yaml-cpp/yaml.h>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/string_generator.hpp>
 #include "third-party/cxxopts.hpp"
 #include "third-party/aixlog.hpp"
 #include "utils.h"
@@ -8,6 +10,16 @@
 
 using namespace boost;
 using namespace boost::asio;
+
+bool is_valid_uuid(std::string const& maybe_uuid, boost::uuids::uuid& result) {
+    using namespace boost::uuids;
+    try {
+        result = string_generator()(maybe_uuid);
+        return result.version() != uuid::version_unknown;
+    } catch(...) {
+        return false;
+    }
+}
 
 int main(int argc, char **argv) {
     cxxopts::Options options("4over6_server", "Server side of 4over6 tunnel");
@@ -46,7 +58,23 @@ int main(int argc, char **argv) {
         ip::address_v4 netmask = ip::address_v4::from_string(config["netmask"].as<std::string>());
 
         ConfigPayload server_conf{"", gateway.to_string(), netmask.to_string(),
-                                  {dns_0.to_string(), dns_1.to_string(), dns_2.to_string()}};
+                                  {dns_0.to_string(), dns_1.to_string(), dns_2.to_string()}, {0}, false};
+
+#ifdef SUPPORT_ENCRYPTION
+        if (config["pk"].IsDefined()) {
+            LOG(INFO) << "Starting server with encryption support" << std::endl;
+            std::string pk = config["pk"].as<std::string>();
+            boost::uuids::uuid uuid;
+            if(is_valid_uuid(pk, uuid)) {
+                for(int i = 0; i < 16; ++i) server_conf.key[i] = uuid.data[i];
+                server_conf.encrypt = true;
+            } else {
+                LOG_FATAL("Invalid pre-shared key. Expected a valid UUID");
+            }
+        } else {
+            LOG(INFO) << "No pre-shared key in config file, disabling encryption support" << std::endl;
+        }
+#endif
 
         auto pool = std::make_shared<utils::AddressPool>(ip::address_v4::from_string(start_addr),
                                                          ip::address_v4::from_string(end_addr));

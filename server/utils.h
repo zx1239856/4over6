@@ -9,6 +9,12 @@
 #include <boost/asio.hpp>
 #include <boost/bind.hpp>
 
+#ifdef SUPPORT_ENCRYPTION
+
+#include <sodium.h>
+
+#endif
+
 #include "third-party/aixlog.hpp"
 #include "msg.h"
 
@@ -45,11 +51,30 @@ namespace utils {
 
     class Server;
 
+#ifdef SUPPORT_ENCRYPTION
+
+    class SecurityHandler {
+    public:
+        explicit SecurityHandler(const uint8_t uuid[16]);
+
+        bool encrypt_msg(struct Msg &dst, const struct Msg &src);
+
+        bool decrypt_msg(struct Msg &dst, const struct Msg &src);
+
+    private:
+        uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+        uint8_t key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
+    };
+
+#endif
+
     class Session
             : public std::enable_shared_from_this<Session> {
     public:
 #if BOOST_VERSION >= 107000
+
         Session(Server &server, boost::asio::executor io_service);
+
 #else
         Session(Server &server, boost::asio::io_service &io_service);
 #endif
@@ -77,14 +102,18 @@ namespace utils {
 
         void do_write(std::size_t length);
 
-        boost::asio::ip::tcp::socket socket;
+#ifdef SUPPORT_ENCRYPTION
+        struct Msg buffer{0};
+#endif
         Server &server;
+        boost::asio::ip::tcp::socket socket;
         enum {
             max_length = sizeof(Msg)
         };
         struct Msg read_data{0};
         struct Msg write_data{0};
         struct UserInfo info = {};
+        bool encrypt = false;
     };
 
     class TunDevice {
@@ -157,6 +186,10 @@ namespace utils {
 
         // TUN device
         TunDevice tunnel;
+
+#ifdef SUPPORT_ENCRYPTION
+        SecurityHandler security;
+#endif
     };
 }
 

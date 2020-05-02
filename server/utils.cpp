@@ -43,6 +43,44 @@ namespace utils {
         }
     }
 
+#ifdef SUPPORT_ENCRYPTION
+
+    SecurityHandler::SecurityHandler(const uint8_t uuid[16]) {
+        memcpy(key, uuid, sizeof(uint8_t) * 16);
+    }
+
+    bool SecurityHandler::encrypt_msg(struct Msg &dst, const struct Msg &src) {
+        randombytes_buf(nonce, sizeof nonce);
+        unsigned long long ciphertext_len;
+        if (src.length + sizeof nonce + crypto_aead_xchacha20poly1305_ietf_ABYTES > DATA_LEN) {
+            return false;
+        }
+        memcpy(dst.data, nonce, sizeof nonce);
+        memcpy(key + 16, nonce, 16 * sizeof(uint8_t));
+        auto cipher = ((uint8_t *) dst.data) + sizeof nonce;
+        crypto_aead_xchacha20poly1305_ietf_encrypt(cipher, &ciphertext_len, (const uint8_t *) &src, src.length,
+                                                   ADDITIONAL_DATA, ADDITIONAL_DATA_LEN, nullptr, nonce, key);
+        dst.type = ENCRYPTED;
+        dst.length = HEADER_LEN + sizeof nonce + ciphertext_len;
+        return true;
+    }
+
+    bool SecurityHandler::decrypt_msg(struct Msg &dst, const struct Msg &src) {
+        memcpy(nonce, src.data, sizeof nonce);
+        unsigned long long decrypted_len;
+        memcpy(key + 16, nonce, 16 * sizeof(uint8_t));
+        auto cipher = ((uint8_t *) src.data) + sizeof nonce;
+        if (src.length > sizeof nonce + HEADER_LEN) {
+            size_t cipher_len = src.length - HEADER_LEN - sizeof nonce;
+            return crypto_aead_xchacha20poly1305_ietf_decrypt((uint8_t *) &dst, &decrypted_len, nullptr, cipher,
+                                                              cipher_len,
+                                                              ADDITIONAL_DATA, ADDITIONAL_DATA_LEN, nonce, key) == 0;
+        }
+        return false;
+    }
+
+#endif
+
 #if BOOST_VERSION >= 107000
 
     Session::Session(Server &_server, boost::asio::executor io_service)
@@ -96,6 +134,15 @@ namespace utils {
 
     void Session::do_write(std::size_t length) {
         auto self(shared_from_this());
+#ifdef SUPPORT_ENCRYPTION
+        if(encrypt) {
+            if(server.security.encrypt_msg(buffer, write_data)) {
+                memcpy(&write_data, &buffer, sizeof(uint8_t) * buffer.length);
+            } else {
+                LOG(DEBUG) << "Encryption required by client, but encryption failed" << std::endl;
+            }
+        }
+#endif
         system::error_code ec;
         boost::asio::write(socket, boost::asio::buffer(&write_data, length), boost::asio::transfer_all(), ec);
         if (ec) {
@@ -121,9 +168,28 @@ namespace utils {
     void Session::on_data_read_done(boost::system::error_code ec) {
         auto msg = &read_data;
         if (!ec) {
-            switch (msg->type) {
+            uint8_t type = msg->type;
+            if (type == ENCRYPTED) {
+#ifdef SUPPORT_ENCRYPTION
+                if (server.config.encrypt) {
+                    encrypt = true;
+                    // decrypt message
+                    if(server.security.decrypt_msg(buffer, *msg)) {
+                        memcpy(msg, &buffer, sizeof(uint8_t) * buffer.length);
+                    } else {
+                        LOG(DEBUG) << "Decryption failed" << std::endl;
+                        type = NO_TYPE;
+                    }
+                } else {
+                    LOG(DEBUG) << "Encryption not enabled on server, but received encrypted message" << std::endl;
+                }
+#else
+                LOG(DEBUG) << "Server does not support encryption, but received encrypted message" << std::endl;
+#endif
+            }
+            switch (type) {
                 case IP_REQUEST: {
-                    auto conf = server.config;
+                    auto &conf = server.config;
                     conf.lease = server.v6_v4_mappings[info.v6addr].to_string();
                     write_data.type = IP_RESPONSE;
                     write_data.length =
@@ -140,6 +206,19 @@ namespace utils {
                                << std::endl;
                     info.secs = time(nullptr);
                     break;
+                case ENCRYPTED:
+                    // server does not support encryption, send NAK
+                    write_data.type = UNSUPPORTED;
+                    write_data.length = HEADER_LEN;
+                    do_write(HEADER_LEN);
+                    break;
+                case UNSUPPORTED:
+                    // client does not support encryption, turn it off
+                    encrypt = false;
+                    break;
+                default:
+                    // unsupported message type, keep silent
+                    break;
             }
             do_read();
         } else {
@@ -154,7 +233,11 @@ namespace utils {
               heartbeat_timer(io_service, ONE_SECOND),
               tunnel(io_service,
                      boost::bind(&Server::handle_tun_data, this, boost::placeholders::_1, boost::placeholders::_2),
-                     "4over6_tun", conf.gateway, conf.netmask) {
+                     "4over6_tun", conf.gateway, conf.netmask)
+#ifdef SUPPORT_ENCRYPTION
+            , security(conf.key)
+#endif
+    {
         accept();
         heartbeat_timer.async_wait(boost::bind(&Server::handle_heartbeat, this));
     }
@@ -189,7 +272,7 @@ namespace utils {
             auto endpoint = session->get_socket().remote_endpoint();
             auto v6addr = endpoint.address().to_v6();
             ip::address_v4 v4addr;
-            if(v6_v4_mappings.find(v6addr.to_string()) != v6_v4_mappings.end()) {
+            if (v6_v4_mappings.find(v6addr.to_string()) != v6_v4_mappings.end()) {
                 // clear previous session if already exists
                 auto v4 = v6_v4_mappings[v6addr.to_string()];
                 auto sess = user_sessions.find(v4addr.to_ulong());
