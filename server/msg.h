@@ -27,8 +27,8 @@ struct Msg {
  * | length | type == ENCRYPTED |  ------------ data ---------------- |
  *                              | nonce (24 bytes) |  encrypted data  |
  */
- constexpr uint8_t ADDITIONAL_DATA[] = "19260817";
- constexpr uint8_t ADDITIONAL_DATA_LEN = sizeof(ADDITIONAL_DATA) / sizeof(uint8_t);
+constexpr uint8_t ADDITIONAL_DATA[] = "19260817";
+constexpr uint8_t ADDITIONAL_DATA_LEN = sizeof(ADDITIONAL_DATA) / sizeof(uint8_t);
 
 constexpr size_t HEADER_LEN = offsetof(Msg, data);
 

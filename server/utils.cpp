@@ -137,7 +137,8 @@ namespace utils {
 #ifdef SUPPORT_ENCRYPTION
         if(encrypt) {
             if(server.security.encrypt_msg(buffer, write_data)) {
-                memcpy(&write_data, &buffer, sizeof(uint8_t) * buffer.length);
+                memcpy(&write_data, &buffer,  buffer.length);
+                length = buffer.length;
             } else {
                 LOG(DEBUG) << "Encryption required by client, but encryption failed" << std::endl;
             }
@@ -172,13 +173,15 @@ namespace utils {
             if (type == ENCRYPTED) {
 #ifdef SUPPORT_ENCRYPTION
                 if (server.config.encrypt) {
-                    encrypt = true;
+                    if (!encrypt) {
+                        encrypt = true;
+                        LOG(INFO) << "Enable encryption for client: " << info.v6addr << std::endl;
+                    }
                     // decrypt message
                     if(server.security.decrypt_msg(buffer, *msg)) {
                         memcpy(msg, &buffer, sizeof(uint8_t) * buffer.length);
                     } else {
                         LOG(DEBUG) << "Decryption failed" << std::endl;
-                        type = NO_TYPE;
                     }
                 } else {
                     LOG(DEBUG) << "Encryption not enabled on server, but received encrypted message" << std::endl;
@@ -187,7 +190,7 @@ namespace utils {
                 LOG(DEBUG) << "Server does not support encryption, but received encrypted message" << std::endl;
 #endif
             }
-            switch (type) {
+            switch (msg->type) {
                 case IP_REQUEST: {
                     auto &conf = server.config;
                     conf.lease = server.v6_v4_mappings[info.v6addr].to_string();
