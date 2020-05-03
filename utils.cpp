@@ -169,6 +169,11 @@ namespace utils {
     void Session::on_data_read_done(boost::system::error_code ec) {
         auto msg = &read_data;
         if (!ec) {
+            if(msg->length > MAX_MSG_LEN) {
+                LOG(DEBUG) << "Invalid msg size" << std::endl;
+                do_read();
+                return;
+            }
             uint8_t type = msg->type;
             if (type == ENCRYPTED) {
 #ifdef SUPPORT_ENCRYPTION

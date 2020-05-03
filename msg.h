@@ -31,6 +31,7 @@ constexpr uint8_t ADDITIONAL_DATA[] = "19260817";
 constexpr uint8_t ADDITIONAL_DATA_LEN = sizeof(ADDITIONAL_DATA) / sizeof(uint8_t);
 
 constexpr size_t HEADER_LEN = offsetof(Msg, data);
+constexpr size_t MAX_MSG_LEN = sizeof(Msg);
 
 struct ConfigPayload {
     std::string lease;
