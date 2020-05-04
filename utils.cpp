@@ -119,6 +119,9 @@ namespace utils {
                        if (!ec) {
                            if (length < HEADER_LEN || read_data.length < HEADER_LEN) {
                                LOG(DEBUG) << "Got invalid packet from: " << info.v6addr << std::endl;
+                           } else if (read_data.length > MAX_MSG_LEN) {
+                               LOG(DEBUG) << "Invalid msg size: " << read_data.length << std::endl;
+                               do_read();
                            } else {
                                async_read(socket, boost::asio::buffer(&read_data.data, std::min(DATA_LEN,
                                                                                                 read_data.length -
@@ -135,9 +138,9 @@ namespace utils {
     void Session::do_write(std::size_t length) {
         auto self(shared_from_this());
 #ifdef SUPPORT_ENCRYPTION
-        if(encrypt) {
-            if(server.security.encrypt_msg(buffer, write_data)) {
-                memcpy(&write_data, &buffer,  buffer.length);
+        if (encrypt) {
+            if (server.security.encrypt_msg(buffer, write_data)) {
+                memcpy(&write_data, &buffer, buffer.length);
                 length = buffer.length;
             } else {
                 LOG(DEBUG) << "Encryption required by client, but encryption failed" << std::endl;
@@ -169,11 +172,6 @@ namespace utils {
     void Session::on_data_read_done(boost::system::error_code ec) {
         auto msg = &read_data;
         if (!ec) {
-            if(msg->length > MAX_MSG_LEN) {
-                LOG(DEBUG) << "Invalid msg size" << std::endl;
-                do_read();
-                return;
-            }
             uint8_t type = msg->type;
             if (type == ENCRYPTED) {
 #ifdef SUPPORT_ENCRYPTION
@@ -183,7 +181,7 @@ namespace utils {
                         LOG(INFO) << "Enable encryption for client: " << info.v6addr << std::endl;
                     }
                     // decrypt message
-                    if(server.security.decrypt_msg(buffer, *msg)) {
+                    if (server.security.decrypt_msg(buffer, *msg)) {
                         memcpy(msg, &buffer, sizeof(uint8_t) * buffer.length);
                     } else {
                         LOG(DEBUG) << "Decryption failed" << std::endl;
