@@ -1,7 +1,7 @@
 listen_address: "::"
 port: 5555
-gateway: "10.0.10.1"
-address_range: "10.0.10.2-10.0.10.250"
+gateway: "10.0.100.1"
+address_range: "10.0.100.2-10.0.100.250"
 netmask: "255.255.255.0"
 dns0: "192.168.10.1"
 dns1: "192.168.10.3"

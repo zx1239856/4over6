@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(server)
+project(4over6)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_BUILD_TYPE release)
@@ -33,7 +33,14 @@ else()
     message("Compile without encryption support")
 endif()
 
-add_executable(server main.cpp utils.cpp)
+set(COMMON_SRCS utils.cpp tun_device.cpp)
+set(INCLUDE_DIRS ${YAML_CPP_INCLUDE_DIR} ${SODIUM_INCLUDE_DIRS})
+set(LINK_LIBS ${YAML_CPP_LIBRARIES} Boost::boost Boost::system ${SODIUM_LDFLAGS})
 
-target_include_directories(server PUBLIC ${YAML_CPP_INCLUDE_DIR} ${SODIUM_INCLUDE_DIRS})
-target_link_libraries(server ${YAML_CPP_LIBRARIES} Boost::boost Boost::system ${SODIUM_LDFLAGS})
+add_executable(server server_main.cpp ${COMMON_SRCS} server.cpp)
+add_executable(client client_main.cpp ${COMMON_SRCS} client.cpp )
+
+target_include_directories(server PUBLIC ${INCLUDE_DIRS})
+target_link_libraries(server ${LINK_LIBS})
+target_include_directories(client PUBLIC ${INCLUDE_DIRS})
+target_link_libraries(client ${LINK_LIBS})

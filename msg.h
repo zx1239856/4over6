@@ -2,8 +2,8 @@
  * Created by zx on 2020/3/12.
  */
 
-#ifndef SERVER_MSG_H
-#define SERVER_MSG_H
+#ifndef SRC_MSG_H
+#define SRC_MSG_H
 
 constexpr uint8_t IP_REQUEST = 100;
 constexpr uint8_t IP_RESPONSE = 101;
@@ -52,4 +52,4 @@ struct ConfigPayload {
     }
 };
 
-#endif //SERVER_MSG_H
+#endif //SRC_MSG_H
