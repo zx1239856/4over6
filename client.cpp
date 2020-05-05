@@ -143,7 +143,6 @@ void Client::do_read() {
 
 void Client::on_data_read_done(boost::system::error_code ec) {
     auto msg = &read_data;
-    LOG(DEBUG) << "Response from server" << std::endl;
     if (!ec) {
         uint8_t type = msg->type;
         if (type == ENCRYPTED) {

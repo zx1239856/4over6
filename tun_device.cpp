@@ -124,9 +124,6 @@ void TunDevice::send_packet(const uint8_t *buffer, size_t length) {
     writebuf[2] = 8;
     writebuf[3] = 0;
     memcpy(4 + writebuf, buffer, std::min(length, sizeof(writebuf) - 4));
-
-//        auto hdr = reinterpret_cast<const struct iphdr *>(buffer);
-//        LOG(DEBUG) << ip::address_v4(ntohl(hdr->saddr)) << " --> " << ip::address_v4(ntohl(hdr->daddr)) << std::endl;
     system::error_code ec;
     boost::asio::write(stream_descriptor, boost::asio::buffer(writebuf, 4 + length), boost::asio::transfer_all(),
                        ec);

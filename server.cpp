@@ -97,7 +97,6 @@ void ServerSession::send_tunnel_data(uint8_t *buf, size_t length) {
     write_data.length = length + HEADER_LEN;
     write_data.type = RESPONSE;
     memcpy(&write_data.data, buf, sizeof(uint8_t) * length);
-//        LOG(DEBUG) << "Send response to client: " << info.v6addr << ", len: " << write_data.length << std::endl;
     do_write();
 }
 
@@ -247,7 +246,6 @@ void Server::handle_tun_data(uint8_t *buffer, size_t length) {
     auto *hdr = reinterpret_cast<struct iphdr *>(buffer);
     if (hdr->version == 4) {
         auto dst = ntohl(hdr->daddr);
-//            LOG(DEBUG) << ip::address_v4(ntohl(hdr->saddr)) << " --> " << ip::address_v4(dst) << std::endl;
         auto it = user_sessions.find(dst);
         if (it != user_sessions.end() && it->second != nullptr) {
             it->second->send_tunnel_data(buffer, length);
