@@ -19,7 +19,7 @@ public:
 
     void stop();
 private:
-    void do_write(size_t length);
+    void do_write();
 
     void do_read();
 
@@ -38,6 +38,7 @@ private:
     // TUN device
     TunDevice tunnel;
     // configs
+    std::string host;
     boost::asio::ip::address_v6 server_addr;
     ushort port;
     bool encrypt;

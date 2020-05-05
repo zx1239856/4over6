@@ -68,20 +68,19 @@ void ServerSession::do_read() {
                });
 }
 
-void ServerSession::do_write(std::size_t length) {
+void ServerSession::do_write() {
     auto self(shared_from_this());
 #ifdef SUPPORT_ENCRYPTION
     if (encrypt) {
         if (server.security.encrypt_msg(buffer, write_data)) {
             memcpy(&write_data, &buffer, buffer.length);
-            length = buffer.length;
         } else {
             LOG(DEBUG) << "Encryption required by client, but encryption failed" << std::endl;
         }
     }
 #endif
     system::error_code ec;
-    boost::asio::write(socket, boost::asio::buffer(&write_data, length), boost::asio::transfer_all(), ec);
+    boost::asio::write(socket, boost::asio::buffer(&write_data, write_data.length), boost::asio::transfer_all(), ec);
     if (ec) {
         close();
     }
@@ -91,15 +90,15 @@ void ServerSession::send_heartbeat() {
     info.count = 20;
     write_data.type = HEARTBEAT;
     write_data.length = HEADER_LEN;
-    do_write(HEADER_LEN);
+    do_write();
 }
 
-void ServerSession::send_tunnel_data(uint8_t *buffer, size_t length) {
+void ServerSession::send_tunnel_data(uint8_t *buf, size_t length) {
     write_data.length = length + HEADER_LEN;
     write_data.type = RESPONSE;
-    memcpy(&write_data.data, buffer, sizeof(uint8_t) * length);
+    memcpy(&write_data.data, buf, sizeof(uint8_t) * length);
 //        LOG(DEBUG) << "Send response to client: " << info.v6addr << ", len: " << write_data.length << std::endl;
-    do_write(write_data.length);
+    do_write();
 }
 
 void ServerSession::on_data_read_done(boost::system::error_code ec) {
@@ -133,7 +132,7 @@ void ServerSession::on_data_read_done(boost::system::error_code ec) {
                 write_data.type = IP_RESPONSE;
                 write_data.length =
                         HEADER_LEN + conf.serialize(write_data.data, DATA_LEN);
-                do_write(write_data.length);
+                do_write();
             }
                 break;
             case REQUEST:
@@ -149,7 +148,7 @@ void ServerSession::on_data_read_done(boost::system::error_code ec) {
                 // server does not support encryption, send NAK
                 write_data.type = UNSUPPORTED;
                 write_data.length = HEADER_LEN;
-                do_write(HEADER_LEN);
+                do_write();
                 break;
             case UNSUPPORTED:
                 // client does not support encryption, turn it off
@@ -167,7 +166,7 @@ void ServerSession::on_data_read_done(boost::system::error_code ec) {
 
 Server::Server(std::shared_ptr<AddressPool> p, const ConfigPayload &conf, io_service &io_service,
                const ip::address_v6 &address, ushort port)
-        : acceptor(io_service, tcp::endpoint(address, port)),
+        : io_serv(io_service), acceptor(io_service, tcp::endpoint(address, port)),
           socket(io_service), pool(std::move(p)), config(conf),
           heartbeat_timer(io_service, ONE_SECOND),
           tunnel(io_service,
@@ -176,9 +175,13 @@ Server::Server(std::shared_ptr<AddressPool> p, const ConfigPayload &conf, io_ser
 #ifdef SUPPORT_ENCRYPTION
         , security(conf.key)
 #endif
-{
+{}
+
+void Server::start() {
+    tunnel.start();
     accept();
     heartbeat_timer.async_wait(boost::bind(&Server::handle_heartbeat, this));
+    io_serv.run();
 }
 
 void Server::handle_heartbeat() {

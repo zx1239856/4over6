@@ -44,7 +44,7 @@ private:
 
     void do_read();
 
-    void do_write(std::size_t length);
+    void do_write();
 
     Server &server;
     boost::asio::ip::tcp::socket socket;
@@ -67,6 +67,8 @@ public:
     Server(std::shared_ptr<utils::AddressPool> pool, const ConfigPayload &config, boost::asio::io_service &io_service,
            const boost::asio::ip::address_v6 &address, ushort port);
 
+    void start();
+
 private:
     void clear_session(const std::string &v6addr) {
         auto it = v6_v4_mappings.find(v6addr);
@@ -85,6 +87,7 @@ private:
 
     void handle_tun_data(uint8_t *buffer, size_t length);
 
+    boost::asio::io_service &io_serv;
     boost::asio::ip::tcp::acceptor acceptor;
     boost::asio::ip::tcp::socket socket;
     // user session and address mappings

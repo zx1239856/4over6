@@ -81,17 +81,19 @@ void TunDevice::assign_tun_route() {
     close(sock);
 }
 
-TunDevice::TunDevice(boost::asio::io_service &io_service, TunDevice::packet_handler handler,
+TunDevice::TunDevice(boost::asio::io_service &io_service, const TunDevice::packet_handler &handler,
                      const std::string &_if_name, const std::string &_tun_ip, const std::string &_net_mask)
         : stream_descriptor(io_service),
           if_name(_if_name), tun_ip(_tun_ip),
-          net_mask(_net_mask), handler_func(handler) {
+          net_mask(_net_mask), handler_func(handler) {}
+
+void TunDevice::start() {
     int tun_fd = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
     if (tun_fd < 0) {
         throw std::runtime_error("Failed to open tun device node /dev/net/tun");
     }
 
-    struct ifreq ifr;
+    struct ifreq ifr{};
     memset(&ifr, 0, sizeof(ifr));
     ifr.ifr_flags = IFF_TUN;
     if (ioctl(tun_fd, TUNSETIFF, &ifr) < 0) {
@@ -100,10 +102,8 @@ TunDevice::TunDevice(boost::asio::io_service &io_service, TunDevice::packet_hand
     }
     if_name = ifr.ifr_name;
 
-    if (!_tun_ip.empty() && !_net_mask.empty()) {
-        assign_tun_ip();
-        assign_tun_route();
-    }
+    assign_tun_ip();
+    assign_tun_route();
 
     int opts = fcntl(tun_fd, F_GETFL);
     if (opts < 0) {

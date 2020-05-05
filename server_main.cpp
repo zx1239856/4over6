@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
         Server server{pool, server_conf, io_serv,
                              ip::address_v6::from_string(config["listen_address"].as<std::string>()),
                              config["port"].as<uint16_t>()};
-        io_serv.run();
+        server.start();
     }
     catch (const cxxopts::OptionException &ex) {
         LOG_WARN(ex.what());

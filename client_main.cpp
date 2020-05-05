@@ -60,6 +60,7 @@ int main(int argc, char **argv) {
         io_service io_serv;
         Client client(io_serv, server, port, encrypt, key);
         client.start();
+        LOG(INFO) << "DEBG" << std::endl;
     }
     catch (const cxxopts::OptionException &ex) {
         LOG_WARN(ex.what());

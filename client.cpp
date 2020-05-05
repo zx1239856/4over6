@@ -21,19 +21,21 @@ Client::Client(boost::asio::io_service &io_service, const std::string &server, u
         tunnel(io_service,
                boost::bind(&Client::handle_tun_data, this, boost::placeholders::_1, boost::placeholders::_2),
                "4over6_client_tun", "", ""),
-        port(_port), encrypt(_encrypt), key(_key)
+        host(server), port(_port), encrypt(_encrypt), key(_key)
 #ifdef SUPPORT_ENCRYPTION
         , security(_key.data())
 #endif
-{
+{}
+
+void Client::start() {
     error_code ec;
-    server_addr = address_v6::from_string(server, ec);
+    server_addr = address_v6::from_string(host, ec);
     if (ec) {
         // try to perform DNS
-        LOG(INFO) << "Performing DNS lookup for host: " << server << std::endl;
-        tcp::resolver dns(io_service);
-        tcp::resolver::query query(server, "http");
-        tcp::resolver::iterator endpoint_iter = dns.resolve(query), end;
+        LOG(INFO) << "Performing DNS lookup for host: " << host << std::endl;
+        tcp::resolver resolver(io_serv);
+        tcp::resolver::query query(host, "http");
+        tcp::resolver::iterator endpoint_iter = resolver.resolve(query), end;
         bool found = false;
         while (endpoint_iter != end) {
             if ((*endpoint_iter).endpoint().address().is_v6()) {
@@ -44,19 +46,16 @@ Client::Client(boost::asio::io_service &io_service, const std::string &server, u
             }
         }
         if (!found) {
-            LOG_FATAL("Failed to found AAAA record for host: " << server);
+            LOG_FATAL("Failed to found AAAA record for host: " << host);
         }
     }
-}
 
-void Client::start() {
     LOG(INFO) << "Connecting to server: " << server_addr << std::endl;
     auto endpoint = tcp::endpoint(server_addr, port);
-    error_code ec;
     socket.connect(endpoint, ec);
     if (ec) {
         LOG_WARN("Failed to connect to server");
-        throw (ec);
+        throw ec;
     } else {
         LOG(INFO) << "Successfully connected to server" << std::endl;
         // start r/w and setup-tunnel
@@ -73,19 +72,18 @@ void Client::stop() {
     LOG_FATAL("Client exit");
 }
 
-void Client::do_write(std::size_t length) {
+void Client::do_write() {
 #ifdef SUPPORT_ENCRYPTION
     if (encrypt) {
         if (security.encrypt_msg(buffer, write_data)) {
             memcpy(&write_data, &buffer, buffer.length);
-            length = buffer.length;
         } else {
             LOG(DEBUG) << "Encryption required by config, but encryption failed" << std::endl;
         }
     }
 #endif
     system::error_code ec;
-    boost::asio::write(socket, boost::asio::buffer(&write_data, length), boost::asio::transfer_all(), ec);
+    boost::asio::write(socket, boost::asio::buffer(&write_data, write_data.length), ec);
     if (ec) {
         stop();
     }
@@ -99,7 +97,7 @@ void Client::handle_heartbeat() {
         LOG(DEBUG) << "Sending heartbeat to server" << std::endl;
         write_data.type = HEARTBEAT;
         write_data.length = HEADER_LEN;
-        do_write(HEADER_LEN);
+        do_write();
         last_heartbeat_sent = now;
     }
     if (now - last_heartbeat_recv > 60) {
@@ -117,7 +115,7 @@ void Client::handle_tun_data(uint8_t *buf, size_t length) {
         write_data.length = length + HEADER_LEN;
         write_data.type = REQUEST;
         memcpy(&write_data.data, buf, sizeof(uint8_t) * length);
-        do_write(write_data.length);
+        do_write();
     }
 }
 
@@ -128,6 +126,7 @@ void Client::do_read() {
                        if (length < HEADER_LEN || read_data.length < HEADER_LEN) {
                            LOG(DEBUG) << "Got invalid packet from server" << std::endl;
                        } else if (read_data.length > MAX_MSG_LEN) {
+                           LOG(DEBUG) << "Invalid msg length: " << read_data.length << std::endl;
                            do_read();
                        } else {
                            async_read(socket, boost::asio::buffer(&read_data.data, std::min(DATA_LEN,
@@ -144,6 +143,7 @@ void Client::do_read() {
 
 void Client::on_data_read_done(boost::system::error_code ec) {
     auto msg = &read_data;
+    LOG(DEBUG) << "Response from server" << std::endl;
     if (!ec) {
         uint8_t type = msg->type;
         if (type == ENCRYPTED) {
@@ -179,6 +179,8 @@ void Client::on_data_read_done(boost::system::error_code ec) {
                     ipv4 = results[0];
                     gateway = results[1];
                     dns[0] = results[2];
+                    tunnel.set_tunnel_ip(ipv4, "255.255.255.0");
+                    tunnel.start();
                 } else {
                     LOG_FATAL("Got invalid IP config from server");
                 }
@@ -195,7 +197,7 @@ void Client::on_data_read_done(boost::system::error_code ec) {
                 // server does not support encryption, send NAK
                 write_data.type = UNSUPPORTED;
                 write_data.length = HEADER_LEN;
-                do_write(HEADER_LEN);
+                do_write();
                 break;
             default:
                 // unsupported message type, keep silent
@@ -212,15 +214,12 @@ void Client::get_ip_config() {
         LOG_FATAL("Failed to obtain IP config from server");
     }
     if (!ipv4.empty()) {
-        tunnel.set_tunnel_ip(ipv4, "255.255.255.0");
-        tunnel.assign_tun_ip();
-        tunnel.assign_tun_route();
         return; // config success
     }
     LOG(INFO) << "Sending IP request to server" << std::endl;
     write_data.type = IP_REQUEST;
     write_data.length = HEADER_LEN;
-    do_write(HEADER_LEN);
+    do_write();
 
     ip_conf_timer.expires_from_now(boost::posix_time::seconds(3));
     ip_conf_timer.async_wait(boost::bind(&Client::get_ip_config, this));

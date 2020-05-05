@@ -12,7 +12,7 @@ class TunDevice {
 public:
     typedef std::function<void(uint8_t *, size_t)> packet_handler;
 
-    TunDevice(boost::asio::io_service &io_service, packet_handler handler, const std::string &if_name,
+    TunDevice(boost::asio::io_service &io_service, const packet_handler &handler, const std::string &if_name,
               const std::string &tun_ip, const std::string &net_mask);
 
     const std::string &device() { return if_name; };
@@ -24,18 +24,21 @@ public:
         net_mask = nmask;
     }
 
-    void assign_tun_ip();
+    void start();
 
-    void assign_tun_route();
 private:
     boost::asio::posix::stream_descriptor stream_descriptor;
     std::string if_name;
     std::string tun_ip;
     std::string net_mask;
-    uint8_t readbuf[1500]{};
-    uint8_t writebuf[1500]{};
+    uint8_t readbuf[4096]{};
+    uint8_t writebuf[4096]{};
 
     packet_handler handler_func;
+
+    void assign_tun_ip();
+
+    void assign_tun_route();
 
     void async_read_packet();
 
