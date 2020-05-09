@@ -224,7 +224,7 @@ void Server::handle_client(std::shared_ptr<ServerSession> session, boost::system
         v4addr = pool->obtain_ip_address();
         if (v4addr.to_ulong() != 0) {
             v6_v4_mappings[v6addr.to_string()] = v4addr;
-            LOG(INFO) << "IPv4 lease: " << v4addr << std::endl;
+            LOG(INFO) << "IPv4 lease: " << v4addr << ", remaining: " << pool->size() << std::endl;
             user_sessions[v4addr.to_ulong()] = session;
             session->start();
         }
